@@ -1,0 +1,30 @@
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: officeops-runtime-py
+spec:
+  template:
+    metadata:
+      annotations:
+        run.googleapis.com/cpu-throttling: "false"
+    spec:
+      containerConcurrency: 20
+      timeoutSeconds: 900
+      containers:
+        - image: IMAGE_PLACEHOLDER
+          ports:
+            - containerPort: 8080
+          env:
+            - name: FIREBASE_PROJECT_ID
+              value: customspro-bd062
+            - name: FIREBASE_STORAGE_BUCKET
+              value: customspro-bd062.firebasestorage.app
+            - name: DEFAULT_MODEL_PROVIDER
+              value: google
+            - name: DEFAULT_MODEL_NAME
+              value: gemini-2.5-pro
+            - name: GEMINI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: GEMINI_API_KEY
+                  key: latest
