@@ -1,12 +1,15 @@
 from officeops_runtime.contracts.artifacts import RuntimeArtifact
 from officeops_runtime.contracts.runtime import (
     AgentCapability,
+    AgentAssetDefaults,
+    AgentAssetOverrides,
     AgentInstance,
     AgentTemplate,
     CompanySnapshot,
     DEFAULT_FLOORS,
     ElevatorTransfer,
     RuntimeRun,
+    UserAsset,
 )
 from officeops_runtime.firebase.admin import rtdb
 from officeops_runtime.utils.ids import create_id
@@ -32,6 +35,11 @@ def _default_agent_templates() -> list[AgentTemplate]:
                 AgentCapability(key="voice-reception", description="Handle Vapi lobby intake.", integration="vapi"),
             ],
             default_tools=["voice_router", "calendar_lookup"],
+            default_assets=AgentAssetDefaults(
+                model_bundle_id="core.agent.lobby.v1",
+                voice_bundle_id="core.voice.lobby.v1",
+                workspace_bundle_id="core.workspace.lobby.v1",
+            ),
         ),
         AgentTemplate(
             id="tmpl_exec_router",
@@ -45,6 +53,11 @@ def _default_agent_templates() -> list[AgentTemplate]:
                 AgentCapability(key="cross-floor-routing", description="Coordinate tasks across floors."),
             ],
             default_tools=["task_router", "floor_dispatch"],
+            default_assets=AgentAssetDefaults(
+                model_bundle_id="core.agent.executive.v1",
+                voice_bundle_id="core.voice.executive.v1",
+                workspace_bundle_id="core.workspace.executive.v1",
+            ),
         ),
         AgentTemplate(
             id="tmpl_engineering_builder",
@@ -58,6 +71,11 @@ def _default_agent_templates() -> list[AgentTemplate]:
                 AgentCapability(key="build-artifacts", description="Generate code and deployable outputs."),
             ],
             default_tools=["artifact_writer", "code_executor"],
+            default_assets=AgentAssetDefaults(
+                model_bundle_id="core.agent.engineering.v1",
+                voice_bundle_id="core.voice.engineering.v1",
+                workspace_bundle_id="core.workspace.engineering.v1",
+            ),
         ),
         AgentTemplate(
             id="tmpl_sales_operator",
@@ -71,6 +89,11 @@ def _default_agent_templates() -> list[AgentTemplate]:
                 AgentCapability(key="meeting-ops", description="Coordinate outreach and meetings.", integration="google_calendar"),
             ],
             default_tools=["crm_sync", "calendar_scheduler"],
+            default_assets=AgentAssetDefaults(
+                model_bundle_id="core.agent.sales.v1",
+                voice_bundle_id="core.voice.sales.v1",
+                workspace_bundle_id="core.workspace.sales.v1",
+            ),
         ),
         AgentTemplate(
             id="tmpl_marketing_producer",
@@ -84,6 +107,11 @@ def _default_agent_templates() -> list[AgentTemplate]:
                 AgentCapability(key="campaign-assets", description="Create campaign drafts and assets."),
             ],
             default_tools=["asset_writer", "content_planner"],
+            default_assets=AgentAssetDefaults(
+                model_bundle_id="core.agent.marketing.v1",
+                voice_bundle_id="core.voice.marketing.v1",
+                workspace_bundle_id="core.workspace.marketing.v1",
+            ),
         ),
         AgentTemplate(
             id="tmpl_accounting_controller",
@@ -97,6 +125,11 @@ def _default_agent_templates() -> list[AgentTemplate]:
                 AgentCapability(key="finance-ops", description="Track books, invoices, and reconciliation."),
             ],
             default_tools=["ledger_writer", "invoice_helper"],
+            default_assets=AgentAssetDefaults(
+                model_bundle_id="core.agent.accounting.v1",
+                voice_bundle_id="core.voice.accounting.v1",
+                workspace_bundle_id="core.workspace.accounting.v1",
+            ),
         ),
     ]
 
@@ -124,6 +157,7 @@ def _build_default_agent_instances(templates: list[AgentTemplate]) -> dict[str, 
             ],
             model_provider=template.model_provider,
             model_name=template.model_name,
+            asset_overrides=AgentAssetOverrides(),
             created_at=timestamp,
             updated_at=timestamp,
             metadata={"seeded": True, **template.metadata},
@@ -165,6 +199,10 @@ def load_company_snapshot(user_id: str) -> CompanySnapshot:
         active_runs=[
             RuntimeRun.model_validate(item)
             for item in (value.get("runs", {}) or {}).values()
+        ],
+        assets=[
+            UserAsset.model_validate(item)
+            for item in (value.get("assets", {}).get("byId", {}) or {}).values()
         ],
     )
 
@@ -224,6 +262,7 @@ def create_agent_instance(
     template: AgentTemplate,
     floor_id: int | None = None,
     label: str | None = None,
+    asset_overrides: AgentAssetOverrides | None = None,
 ) -> AgentInstance:
     timestamp = now_ms()
     instance = AgentInstance(
@@ -243,6 +282,7 @@ def create_agent_instance(
         ],
         model_provider=template.model_provider,
         model_name=template.model_name,
+        asset_overrides=asset_overrides or AgentAssetOverrides(),
         created_at=timestamp,
         updated_at=timestamp,
         metadata=template.metadata,
@@ -251,3 +291,31 @@ def create_agent_instance(
         f"{_company_path(user_id)}/floors/{instance.current_floor_id}/agents/{instance.id}"
     ).set(instance.model_dump())
     return instance
+
+
+def save_user_asset(user_id: str, asset: UserAsset) -> None:
+    base = _company_path(user_id)
+    rtdb.reference(f"{base}/assets/byId/{asset.id}").set(asset.model_dump())
+
+
+def update_agent_instance_assets(
+    user_id: str,
+    agent_id: str,
+    asset_overrides: AgentAssetOverrides,
+) -> AgentInstance | None:
+    company = load_company_snapshot(user_id)
+    for floor_id, agents in company.floor_agents.items():
+        for agent in agents:
+            if agent.id != agent_id:
+                continue
+            updated_agent = agent.model_copy(
+                update={
+                    "asset_overrides": asset_overrides,
+                    "updated_at": now_ms(),
+                }
+            )
+            rtdb.reference(f"{_company_path(user_id)}/floors/{floor_id}/agents/{agent_id}").set(
+                updated_agent.model_dump()
+            )
+            return updated_agent
+    return None

@@ -30,6 +30,43 @@ AgentRuntimeStatus = Literal["idle", "moving", "working", "waiting", "failed", "
 ElevatorTransferStatus = Literal["queued", "moving", "arrived", "cancelled"]
 RunStatus = Literal["running", "complete", "error", "cancelled"]
 RouteMode = Literal["full", "plan_only", "review_only", "quick_fix"]
+UserAssetKind = Literal["model", "texture", "voice", "workspace", "image", "video", "audio", "document", "other"]
+
+
+class BundledAssetRef(BaseModel):
+    bundle_id: str
+    kind: UserAssetKind
+    path: str
+    version: int = 1
+
+
+class AgentAssetDefaults(BaseModel):
+    model_bundle_id: str | None = None
+    voice_bundle_id: str | None = None
+    workspace_bundle_id: str | None = None
+
+
+class AgentAssetOverrides(BaseModel):
+    model_asset_id: str | None = None
+    voice_asset_id: str | None = None
+    workspace_asset_id: str | None = None
+
+
+class UserAsset(BaseModel):
+    id: str
+    name: str
+    kind: UserAssetKind
+    format: str
+    storage_path: str
+    download_url: str | None = None
+    thumbnail_url: str | None = None
+    version: int = 1
+    checksum: str | None = None
+    size: int | None = None
+    owner_uid: str
+    created_at: int
+    updated_at: int
+    metadata: dict[str, object] = Field(default_factory=dict)
 
 
 class FloorDefinition(BaseModel):
@@ -57,6 +94,7 @@ class AgentTemplate(BaseModel):
     system_prompt: str | None = None
     capabilities: list[AgentCapability] = Field(default_factory=list)
     default_tools: list[str] = Field(default_factory=list)
+    default_assets: AgentAssetDefaults = Field(default_factory=AgentAssetDefaults)
     metadata: dict[str, object] = Field(default_factory=dict)
 
 
@@ -73,6 +111,7 @@ class AgentInstance(BaseModel):
     integrations: list[IntegrationKey] = Field(default_factory=list)
     model_provider: str
     model_name: str
+    asset_overrides: AgentAssetOverrides = Field(default_factory=AgentAssetOverrides)
     created_at: int
     updated_at: int
     metadata: dict[str, object] = Field(default_factory=dict)
@@ -121,6 +160,7 @@ class CompanySnapshot(BaseModel):
     agent_templates: list[AgentTemplate]
     floor_agents: dict[int, list[AgentInstance]]
     active_runs: list[RuntimeRun]
+    assets: list[UserAsset] = Field(default_factory=list)
 
 
 class RuntimeLog(BaseModel):

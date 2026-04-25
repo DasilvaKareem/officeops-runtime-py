@@ -2,11 +2,13 @@ from fastapi import FastAPI
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, model_validator
 
-from officeops_runtime.contracts.runtime import AgentTemplate
+from officeops_runtime.contracts.runtime import AgentAssetOverrides, AgentTemplate, UserAsset
 from officeops_runtime.firebase.company_runtime import (
     create_agent_instance,
     load_company_snapshot,
     save_agent_template,
+    save_user_asset,
+    update_agent_instance_assets,
 )
 from officeops_runtime.server.sse import build_failure_stream, build_success_stream
 from officeops_runtime.services.runtime_service import run_runtime_graph
@@ -47,6 +49,17 @@ class AgentInstanceCreateRequest(BaseModel):
     template_id: str
     floor_id: int | None = Field(default=None, ge=1, le=7)
     label: str | None = None
+    asset_overrides: AgentAssetOverrides = Field(default_factory=AgentAssetOverrides)
+
+
+class AssetRegisterRequest(BaseModel):
+    user_id: str
+    asset: UserAsset
+
+
+class AgentAssetUpdateRequest(BaseModel):
+    user_id: str
+    asset_overrides: AgentAssetOverrides
 
 
 @app.get("/health")
@@ -80,8 +93,29 @@ def create_instance(request: AgentInstanceCreateRequest):
         template=template,
         floor_id=request.floor_id,
         label=request.label,
+        asset_overrides=request.asset_overrides,
     )
     return {"ok": True, "agent": instance.model_dump()}
+
+
+@app.post("/api/assets/register")
+def register_asset(request: AssetRegisterRequest):
+    if request.asset.owner_uid != request.user_id:
+        return {"ok": False, "error": "asset.owner_uid must match user_id"}
+    save_user_asset(request.user_id, request.asset)
+    return {"ok": True, "asset": request.asset.model_dump()}
+
+
+@app.patch("/api/agents/{agent_id}/assets")
+def update_agent_assets(agent_id: str, request: AgentAssetUpdateRequest):
+    updated_agent = update_agent_instance_assets(
+        request.user_id,
+        agent_id=agent_id,
+        asset_overrides=request.asset_overrides,
+    )
+    if updated_agent is None:
+        return {"ok": False, "error": f"Agent {agent_id} not found"}
+    return {"ok": True, "agent": updated_agent.model_dump()}
 
 
 @app.post("/api/orchestrate")
