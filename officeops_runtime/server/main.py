@@ -1,8 +1,9 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, model_validator
 
 from officeops_runtime.contracts.runtime import AgentAssetOverrides, AgentTemplate, UserAsset
+from officeops_runtime.firebase.artifact_store import persist_user_asset_upload
 from officeops_runtime.firebase.company_runtime import (
     create_agent_instance,
     load_company_snapshot,
@@ -14,6 +15,32 @@ from officeops_runtime.server.sse import build_failure_stream, build_success_str
 from officeops_runtime.services.runtime_service import run_runtime_graph
 
 app = FastAPI(title="OfficeOps Runtime Python")
+
+
+def _apply_asset_binding(
+    user_id: str,
+    agent_id: str | None,
+    slot: str | None,
+    asset_id: str,
+):
+    if not agent_id or not slot:
+        return None
+
+    field_map = {
+        "model": "model_asset_id",
+        "voice": "voice_asset_id",
+        "workspace": "workspace_asset_id",
+    }
+    target_field = field_map.get(slot)
+    if target_field is None:
+        return None
+
+    overrides = AgentAssetOverrides(**{target_field: asset_id})
+    return update_agent_instance_assets(
+        user_id,
+        agent_id=agent_id,
+        asset_overrides=overrides,
+    )
 
 
 class OrchestrateRequest(BaseModel):
@@ -104,6 +131,45 @@ def register_asset(request: AssetRegisterRequest):
         return {"ok": False, "error": "asset.owner_uid must match user_id"}
     save_user_asset(request.user_id, request.asset)
     return {"ok": True, "asset": request.asset.model_dump()}
+
+
+@app.post("/api/assets/upload")
+async def upload_asset(
+    user_id: str = Form(...),
+    kind: str = Form(...),
+    file: UploadFile = File(...),
+    agent_id: str | None = Form(default=None),
+    slot: str | None = Form(default=None),
+):
+    allowed_kinds = {"model", "texture", "voice", "workspace", "image", "video", "audio", "document", "other"}
+    allowed_slots = {None, "model", "voice", "workspace"}
+    if kind not in allowed_kinds:
+        raise HTTPException(status_code=400, detail=f"Unsupported asset kind: {kind}")
+    if slot not in allowed_slots:
+        raise HTTPException(status_code=400, detail=f"Unsupported asset slot: {slot}")
+
+    payload = await file.read()
+    if not payload:
+        raise HTTPException(status_code=400, detail="Uploaded file is empty")
+
+    asset = persist_user_asset_upload(
+        user_id=user_id,
+        kind=kind,
+        file_name=file.filename or "upload.bin",
+        content_type=file.content_type or "application/octet-stream",
+        payload=payload,
+        metadata={
+            "uploaded_via": "api",
+            "bound_agent_id": agent_id,
+            "slot": slot,
+        },
+    )
+    save_user_asset(user_id, asset)
+    updated_agent = _apply_asset_binding(user_id, agent_id, slot, asset.id)
+    response = {"ok": True, "asset": asset.model_dump()}
+    if updated_agent is not None:
+        response["agent"] = updated_agent.model_dump()
+    return response
 
 
 @app.patch("/api/agents/{agent_id}/assets")

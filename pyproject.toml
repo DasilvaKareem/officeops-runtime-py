@@ -11,7 +11,8 @@ dependencies = [
   "langchain-core>=0.3.29",
   "pydantic>=2.10.4",
   "pydantic-settings>=2.7.0",
-  "firebase-admin>=6.6.0"
+  "firebase-admin>=6.6.0",
+  "python-multipart>=0.0.20"
 ]
 
 [project.optional-dependencies]
