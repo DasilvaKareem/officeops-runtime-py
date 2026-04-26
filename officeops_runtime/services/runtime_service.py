@@ -136,7 +136,11 @@ def stream_runtime_graph(user_id: str, floor_id: int, prompt: str):
                 error=str(error),
                 message=f"{agent_label or stage_name} failed: {error}",
             )
-            raise
+            yield WorkflowFailedEvent(
+                run_id=state.run_id,
+                message=f"{agent_label or stage_name} failed: {error}",
+            )
+            return
 
         for log in state.logs[previous_log_count:]:
             yield MessageEvent(

@@ -873,12 +873,15 @@ export const useOfficeStore = create<OfficeState>((set, get) => ({
     }
 
     try {
+      let sawAnyEvent = false;
+      let sawTerminalEvent = false;
       await runOrchestratorStream({
         prompt,
         userId: auth.currentUser?.uid,
         floorId: get().selectedFloor ?? 7,
         signal: controller.signal,
         onEvent: (event: OrchestratorEvent) => {
+          sawAnyEvent = true;
           const now = Date.now();
 
           if (event.kind === "workflow_started") {
@@ -1072,11 +1075,13 @@ export const useOfficeStore = create<OfficeState>((set, get) => ({
           }
 
           if (event.kind === "workflow_failed") {
+            sawTerminalEvent = true;
             markRunFinished("error", event.text, "warning");
             return;
           }
 
           if (event.kind === "workflow_completed") {
+            sawTerminalEvent = true;
             const artifacts = event.artifacts && event.artifacts.length > 0 ? event.artifacts : undefined;
             const assistantMessage = extractAssistantMessage(artifacts);
             updateRun((runState) => ({
@@ -1100,11 +1105,21 @@ export const useOfficeStore = create<OfficeState>((set, get) => ({
 
       const activeRun = get().runs.find((entry) => entry.id === runId);
       if (activeRun?.status === "running") {
-        markRunFinished(
-          "complete",
-          `Task finished. ${activeRun.completedSteps}/${activeRun.totalSteps} steps complete, spent ${fmtMoney(activeRun.totalSpent)}.`,
-          "success"
-        );
+        if (sawTerminalEvent) {
+          markRunFinished(
+            "complete",
+            `Task finished. ${activeRun.completedSteps}/${activeRun.totalSteps} steps complete, spent ${fmtMoney(activeRun.totalSpent)}.`,
+            "success"
+          );
+        } else {
+          markRunFinished(
+            "error",
+            sawAnyEvent
+              ? "Runtime stream ended before completion. Check backend logs for the failing stage."
+              : "No runtime events received from orchestrator.",
+            "warning"
+          );
+        }
       }
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") {
