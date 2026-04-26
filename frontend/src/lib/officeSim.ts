@@ -109,6 +109,32 @@ const IDLE: Record<AgentRole, [number, number, number]> = {
   qa: DESKS.qa,
 };
 
+const EXTRA_AGENT_POSITIONS: [number, number, number][] = [
+  [-4.2, 0.1, -2.2],
+  [4.2, 0.1, -2.2],
+  [-4.2, 0.1, 1.2],
+  [4.2, 0.1, 1.2],
+  [-2.2, 0.1, 4.2],
+  [2.2, 0.1, 4.2],
+  [0, 0.1, 5.4],
+  [-5.6, 0.1, 4.4],
+  [5.6, 0.1, 4.4],
+];
+
+export function getAgentHomePosition(index: number, role?: AgentRole): [number, number, number] {
+  if (typeof role === "string" && AGENT_ORDER[index] === role) return IDLE[role];
+  const preset = EXTRA_AGENT_POSITIONS[index % EXTRA_AGENT_POSITIONS.length];
+  const ring = Math.floor(index / EXTRA_AGENT_POSITIONS.length);
+  if (ring === 0) return preset;
+  const angle = index * 2.399963229728653;
+  const radius = 4 + ring * 1.2;
+  return [
+    Number((Math.cos(angle) * radius).toFixed(2)),
+    0.1,
+    Number((Math.sin(angle) * radius + 1.4).toFixed(2)),
+  ];
+}
+
 export function buildInitialAgents(): AgentState[] {
   return AGENT_ORDER.map((role, idx) => ({
     id: role,

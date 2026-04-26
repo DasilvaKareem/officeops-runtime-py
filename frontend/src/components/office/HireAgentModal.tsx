@@ -7,7 +7,7 @@ import * as THREE from "three";
 import * as SkeletonUtils from "three/examples/jsm/utils/SkeletonUtils.js";
 import type { GLTF } from "three-stdlib";
 import { useOfficeStore } from "@/src/store/useOfficeStore";
-import { AgentRole, AgentState, coerceAgentModelPath } from "@/src/lib/officeSim";
+import { AgentRole, AgentState, coerceAgentModelPath, getAgentHomePosition } from "@/src/lib/officeSim";
 
 const MODELS = [
   { id: "Casual2_Male", label: "Casual (Male)", path: "/models/characters/Casual2_Male.gltf" },
@@ -117,6 +117,7 @@ export function HireAgentModal({ existingAgent = null, onClose }: HireAgentModal
     }
 
     const uniqueId = makeUniqueAgentId(role, new Set(baseAgents.map((agent) => agent.id)));
+    const homePosition = getAgentHomePosition(baseAgents.length, role);
     const newAgent: AgentState = {
       id: uniqueId,
       role,
@@ -129,9 +130,9 @@ export function HireAgentModal({ existingAgent = null, onClose }: HireAgentModal
       status: "idle",
       balance: 0.0,
       currentTask: null,
-      position: [0, 0.1, 0],
-      idlePosition: [0, 0.1, 0],
-      deskPosition: [(Math.random() - 0.5) * 4, 0.1, (Math.random() - 0.5) * 4],
+      position: homePosition,
+      idlePosition: homePosition,
+      deskPosition: homePosition,
     };
 
     addAgent(newAgent);

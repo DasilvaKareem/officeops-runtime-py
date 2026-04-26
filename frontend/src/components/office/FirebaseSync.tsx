@@ -4,7 +4,12 @@ import { useEffect, useRef } from "react";
 import { auth, db } from "@/src/lib/firebase";
 import { onAuthStateChanged } from "firebase/auth";
 import { ref, get, set } from "firebase/database";
-import { buildInitialAgents, coerceAgentModelPath, type AgentState } from "@/src/lib/officeSim";
+import {
+  buildInitialAgents,
+  coerceAgentModelPath,
+  getAgentHomePosition,
+  type AgentState,
+} from "@/src/lib/officeSim";
 import { useOfficeStore, initialFurniture, type UserProfile } from "@/src/store/useOfficeStore";
 import { syncRuntimeAgentsForFloor } from "@/src/lib/companyRuntime";
 
@@ -20,7 +25,7 @@ function normalizeAgents(rawAgents: unknown[]): AgentState[] {
   const fallbackAgents = buildInitialAgents();
   const fallbackById = new Map(fallbackAgents.map((agent) => [agent.id, agent]));
 
-  return rawAgents
+  const normalizedAgents = rawAgents
     .filter(Boolean)
     .map((entry, index) => {
       const candidate = entry as Partial<AgentState>;
@@ -62,6 +67,27 @@ function normalizeAgents(rawAgents: unknown[]): AgentState[] {
 
       return normalized;
     });
+
+  const positionCounts = new Map<string, number>();
+  for (const agent of normalizedAgents) {
+    const key = `${agent.position[0].toFixed(2)},${agent.position[2].toFixed(2)}`;
+    positionCounts.set(key, (positionCounts.get(key) ?? 0) + 1);
+  }
+
+  return normalizedAgents.map((agent, index) => {
+    const key = `${agent.position[0].toFixed(2)},${agent.position[2].toFixed(2)}`;
+    const isOriginPile = Math.abs(agent.position[0]) < 0.01 && Math.abs(agent.position[2]) < 0.01;
+    const isStacked = (positionCounts.get(key) ?? 0) > 1;
+    if (!isOriginPile && !isStacked) return agent;
+
+    const homePosition = getAgentHomePosition(index, agent.role);
+    return {
+      ...agent,
+      position: homePosition,
+      idlePosition: homePosition,
+      deskPosition: homePosition,
+    };
+  });
 }
 
 export function FirebaseSync() {
