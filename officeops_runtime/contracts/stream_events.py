@@ -50,6 +50,8 @@ class PaymentEvent(BaseModel):
     from_agent: str | None = None
     to_agent: str | None = None
     amount: float | None = None
+    tx_hash: str | None = None
+    status: str | None = None
 
 
 class MessageEvent(BaseModel):

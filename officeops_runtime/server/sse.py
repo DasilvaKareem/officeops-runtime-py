@@ -1,4 +1,4 @@
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterable
 
 from officeops_runtime.contracts.stream_events import (
     MessageEvent,
@@ -12,6 +12,11 @@ from officeops_runtime.contracts.runtime import RuntimeGraphState
 
 def _serialize(event: StreamEvent) -> str:
     return f"data: {event.model_dump_json()}\n\n"
+
+
+async def build_stream(events: Iterable[StreamEvent]) -> AsyncIterator[str]:
+    for event in events:
+        yield _serialize(event)
 
 
 async def build_success_stream(state: RuntimeGraphState) -> AsyncIterator[str]:

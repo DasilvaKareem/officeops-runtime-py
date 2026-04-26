@@ -17,8 +17,8 @@ from officeops_runtime.firebase.company_runtime import (
 )
 from officeops_runtime.llm.gemini import GeminiError, generate_text
 from officeops_runtime.llm.prompts import ASSISTANT_SYSTEM_PROMPT
-from officeops_runtime.server.sse import build_failure_stream, build_success_stream
-from officeops_runtime.services.runtime_service import run_runtime_graph
+from officeops_runtime.server.sse import build_failure_stream, build_stream
+from officeops_runtime.services.runtime_service import stream_runtime_graph
 from officeops_runtime.utils.time import now_ms
 
 app = FastAPI(title="OfficeOps Runtime Python")
@@ -294,12 +294,12 @@ def reset_agent_conversation(agent_id: str, user_id: str = Query(..., min_length
 @app.post("/api/orchestrate")
 async def orchestrate(request: OrchestrateRequest):
     try:
-        final_state = run_runtime_graph(
+        events = stream_runtime_graph(
             user_id=request.user_id,
             floor_id=request.floor_id,
             prompt=request.prompt,
         )
-        return StreamingResponse(build_success_stream(final_state), media_type="text/event-stream")
+        return StreamingResponse(build_stream(events), media_type="text/event-stream")
     except Exception as error:  # noqa: BLE001
         return StreamingResponse(
             build_failure_stream("unknown", str(error)),

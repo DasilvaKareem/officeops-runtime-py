@@ -57,7 +57,11 @@ function normalizeEvent(payload: unknown): OrchestratorEvent | null {
 
   const obj = payload as Record<string, unknown>;
   const typeRaw = String(obj.event ?? obj.type ?? obj.kind ?? "").toLowerCase();
-  const runId = typeof obj.runId === "string" ? obj.runId : undefined;
+  const runId = typeof obj.runId === "string"
+    ? obj.runId
+    : typeof obj.run_id === "string"
+      ? obj.run_id
+      : undefined;
   const text = typeof obj.message === "string"
     ? obj.message
     : typeof obj.text === "string"
@@ -72,8 +76,16 @@ function normalizeEvent(payload: unknown): OrchestratorEvent | null {
       : typeof obj.fromAgent === "string"
         ? obj.fromAgent
         : undefined;
-  const toAgent = typeof obj.toAgent === "string" ? obj.toAgent : undefined;
-  const stepId = typeof obj.stepId === "string" ? obj.stepId : undefined;
+  const toAgent = typeof obj.toAgent === "string"
+    ? obj.toAgent
+    : typeof obj.to_agent === "string"
+      ? obj.to_agent
+      : undefined;
+  const stepId = typeof obj.stepId === "string"
+    ? obj.stepId
+    : typeof obj.step_id === "string"
+      ? obj.step_id
+      : undefined;
   const amount = toNumber(obj.amount ?? obj.payment);
   const token = typeof obj.token === "string" ? obj.token : undefined;
   const compactText = text && text.length > 220 ? `${text.slice(0, 220)}...` : text;
@@ -134,15 +146,27 @@ function normalizeEvent(payload: unknown): OrchestratorEvent | null {
     const errorText = typeof obj.error === "string" ? obj.error : compactText ?? "Workflow blocked.";
     return { kind: "workflow_failed", runId, text: errorText };
   }
-  if (typeRaw.includes("payment") || obj.txHash || obj.fromAgent || obj.toAgent) {
+  if (typeRaw.includes("payment") || obj.txHash || obj.tx_hash || obj.fromAgent || obj.from_agent || obj.toAgent || obj.to_agent) {
     return {
       kind: "payment",
       runId,
-      fromAgent: typeof obj.fromAgent === "string" ? obj.fromAgent : agent,
+      fromAgent: typeof obj.fromAgent === "string"
+        ? obj.fromAgent
+        : typeof obj.from_agent === "string"
+          ? obj.from_agent
+          : agent,
       toAgent,
       amount,
-      taskId: typeof obj.taskId === "string" ? obj.taskId : undefined,
-      txHash: typeof obj.txHash === "string" ? obj.txHash : undefined,
+      taskId: typeof obj.taskId === "string"
+        ? obj.taskId
+        : typeof obj.task_id === "string"
+          ? obj.task_id
+          : undefined,
+      txHash: typeof obj.txHash === "string"
+        ? obj.txHash
+        : typeof obj.tx_hash === "string"
+          ? obj.tx_hash
+          : undefined,
       status: typeof obj.status === "string" ? obj.status : undefined,
     };
   }

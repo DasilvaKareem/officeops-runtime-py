@@ -194,9 +194,20 @@ const agentAliases: Record<string, string[]> = {
   qa: ["qa", "quality", "review", "verifier", "testing", "security", "deploy"],
 };
 
-function resolveAgentId(raw?: string): string | null {
+function resolveAgentId(raw?: string, candidates: AgentState[] = []): string | null {
   if (!raw) return null;
   const lower = raw.toLowerCase();
+  const exactMatch = candidates.find((agent) => agent.id.toLowerCase() === lower);
+  if (exactMatch) return exactMatch.id;
+
+  const textMatch = candidates.find((agent) => {
+    const id = agent.id.toLowerCase();
+    const label = agent.label.toLowerCase();
+    const role = agent.role.toLowerCase();
+    return lower.includes(id) || lower.includes(label) || lower.includes(role);
+  });
+  if (textMatch) return textMatch.id;
+
   for (const [agentId, aliases] of Object.entries(agentAliases)) {
     if (aliases.some((alias) => lower.includes(alias))) return agentId;
   }
@@ -730,7 +741,7 @@ export const useOfficeStore = create<OfficeState>((set, get) => ({
           }
 
           if (event.kind === "agent_started") {
-            const agentId = resolveAgentId(event.agent ?? event.text);
+            const agentId = resolveAgentId(event.agent ?? event.text, get().baseAgents);
             if (!agentId) {
               const rawText = event.text ?? event.agent;
               if (!rawText) return;
@@ -770,7 +781,7 @@ export const useOfficeStore = create<OfficeState>((set, get) => ({
           }
 
           if (event.kind === "agent_stream") {
-            const agentId = resolveAgentId(event.agent ?? event.text);
+            const agentId = resolveAgentId(event.agent ?? event.text, get().baseAgents);
             if (!agentId) return;
             updateRun((runState) =>
               updateRunAgent(
@@ -793,7 +804,7 @@ export const useOfficeStore = create<OfficeState>((set, get) => ({
           }
 
           if (event.kind === "agent_completed") {
-            const agentId = resolveAgentId(event.agent ?? event.text);
+            const agentId = resolveAgentId(event.agent ?? event.text, get().baseAgents);
             const amount = event.amount ?? DEFAULT_STEP_PAYMENT;
 
             if (!agentId) {
@@ -842,7 +853,7 @@ export const useOfficeStore = create<OfficeState>((set, get) => ({
           }
 
           if (event.kind === "agent_failed") {
-            const agentId = resolveAgentId(event.agent ?? event.text);
+            const agentId = resolveAgentId(event.agent ?? event.text, get().baseAgents);
             updateRun((runState) => {
               const withStatus = {
                 ...runState,
