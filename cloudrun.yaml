@@ -22,9 +22,10 @@ spec:
             - name: DEFAULT_MODEL_PROVIDER
               value: google
             - name: DEFAULT_MODEL_NAME
-              value: gemini-2.5-pro
-            - name: GEMINI_API_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: GEMINI_API_KEY
-                  key: latest
+              value: gemini-3-flash-preview
+            - name: GOOGLE_CLOUD_PROJECT
+              value: customspro-bd062
+            - name: GOOGLE_CLOUD_LOCATION
+              value: global
+            - name: GOOGLE_GENAI_USE_VERTEXAI
+              value: "true"

@@ -1,7 +1,8 @@
 import json
-import urllib.error
-import urllib.request
 from typing import Any
+
+from google import genai
+from google.genai import errors, types
 
 from officeops_runtime.config import settings
 
@@ -17,59 +18,42 @@ def generate_text(
     temperature: float = 0.3,
     response_mime_type: str | None = None,
 ) -> str:
-    api_key = settings.gemini_api_key or settings.google_api_key
-    if not api_key:
-        raise GeminiError("Missing GEMINI_API_KEY or GOOGLE_API_KEY")
+    model_name = settings.default_model_name or "gemini-3-flash-preview"
+    if not model_name.lower().startswith("gemini-"):
+        model_name = "gemini-3-flash-preview"
 
-    model_name = settings.default_model_name or "gemini-2.5-pro"
-    url = (
-        f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent"
-        f"?key={api_key}"
+    project = settings.google_cloud_project or settings.firebase_project_id
+    if not project:
+        raise GeminiError("Missing GOOGLE_CLOUD_PROJECT or FIREBASE_PROJECT_ID")
+
+    client = genai.Client(
+        vertexai=settings.google_genai_use_vertexai,
+        project=project,
+        location=settings.google_cloud_location,
     )
 
-    body: dict[str, Any] = {
-        "contents": [
-            {
-                "role": "user",
-                "parts": [{"text": prompt}],
-            }
-        ],
-        "generationConfig": {
-            "temperature": temperature,
-        },
-    }
-
-    if system_instruction:
-        body["systemInstruction"] = {
-            "parts": [{"text": system_instruction}],
-        }
+    config = types.GenerateContentConfig(
+        temperature=temperature,
+        response_mime_type=response_mime_type,
+        system_instruction=system_instruction,
+    )
     if response_mime_type:
-        body["generationConfig"]["responseMimeType"] = response_mime_type
-
-    request = urllib.request.Request(
-        url,
-        data=json.dumps(body).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
+        config.response_mime_type = response_mime_type
 
     try:
-        with urllib.request.urlopen(request, timeout=120) as response:
-            payload = json.loads(response.read().decode("utf-8"))
-    except urllib.error.HTTPError as error:
-        details = error.read().decode("utf-8", errors="replace")
-        raise GeminiError(f"Gemini request failed ({error.code}): {details}") from error
-    except urllib.error.URLError as error:
-        raise GeminiError(f"Gemini request failed: {error.reason}") from error
+        response = client.models.generate_content(
+            model=model_name,
+            contents=prompt,
+            config=config,
+        )
+    except errors.APIError as error:
+        raise GeminiError(f"Gemini request failed ({error.code}): {error.message}") from error
+    except Exception as error:
+        raise GeminiError(f"Gemini request failed: {error}") from error
 
-    candidates = payload.get("candidates") or []
-    if not candidates:
-        raise GeminiError(f"Gemini returned no candidates: {payload}")
-
-    parts = candidates[0].get("content", {}).get("parts", [])
-    text = "".join(part.get("text", "") for part in parts if isinstance(part, dict)).strip()
+    text = (response.text or "").strip()
     if not text:
-        raise GeminiError(f"Gemini returned empty text: {payload}")
+        raise GeminiError(f"Gemini returned empty text: {response.model_dump_json()}")
     return text
 
 

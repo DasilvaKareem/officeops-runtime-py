@@ -1,18 +1,25 @@
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, model_validator
 
 from officeops_runtime.contracts.runtime import AgentAssetOverrides, AgentTemplate, UserAsset
 from officeops_runtime.firebase.artifact_store import persist_user_asset_upload
 from officeops_runtime.firebase.company_runtime import (
+    append_agent_conversation_messages,
+    clear_agent_conversation,
     create_agent_instance,
+    get_agent_instance,
+    load_agent_conversation,
     load_company_snapshot,
     save_agent_template,
     save_user_asset,
     update_agent_instance_assets,
 )
+from officeops_runtime.llm.gemini import GeminiError, generate_text
+from officeops_runtime.llm.prompts import ASSISTANT_SYSTEM_PROMPT
 from officeops_runtime.server.sse import build_failure_stream, build_success_stream
 from officeops_runtime.services.runtime_service import run_runtime_graph
+from officeops_runtime.utils.time import now_ms
 
 app = FastAPI(title="OfficeOps Runtime Python")
 
@@ -87,6 +94,48 @@ class AssetRegisterRequest(BaseModel):
 class AgentAssetUpdateRequest(BaseModel):
     user_id: str
     asset_overrides: AgentAssetOverrides
+
+
+class AgentConversationRequest(BaseModel):
+    user_id: str | None = None
+    userId: str | None = None
+    message: str
+    max_history: int = Field(default=20, ge=1, le=100)
+
+    @model_validator(mode="after")
+    def normalize(self) -> "AgentConversationRequest":
+        user_id = self.user_id or self.userId
+        if not user_id:
+            raise ValueError("user_id or userId is required")
+        if not self.message or not self.message.strip():
+            raise ValueError("message is required")
+        self.user_id = user_id
+        self.message = self.message.strip()
+        return self
+
+
+def _build_conversation_prompt(
+    *,
+    agent_label: str,
+    agent_role: str,
+    history: list[dict[str, object]],
+    user_message: str,
+) -> str:
+    history_lines: list[str] = []
+    for item in history[-20:]:
+        role = str(item.get("role") or "assistant").upper()
+        text = str(item.get("text") or "").strip()
+        if not text:
+            continue
+        history_lines.append(f"{role}: {text}")
+
+    transcript = "\n".join(history_lines) if history_lines else "(no prior messages)"
+    return (
+        f"You are in a 1:1 chat as office agent '{agent_label}' ({agent_role}).\n"
+        f"Conversation history:\n{transcript}\n\n"
+        f"USER: {user_message}\n"
+        "ASSISTANT:"
+    )
 
 
 @app.get("/health")
@@ -182,6 +231,64 @@ def update_agent_assets(agent_id: str, request: AgentAssetUpdateRequest):
     if updated_agent is None:
         return {"ok": False, "error": f"Agent {agent_id} not found"}
     return {"ok": True, "agent": updated_agent.model_dump()}
+
+
+@app.get("/api/agents/{agent_id}/conversation")
+def get_agent_conversation(
+    agent_id: str,
+    user_id: str = Query(..., min_length=1),
+    limit: int = Query(20, ge=1, le=100),
+):
+    agent = get_agent_instance(user_id, agent_id)
+    if agent is None:
+        raise HTTPException(status_code=404, detail=f"Agent {agent_id} not found")
+    messages = load_agent_conversation(user_id, agent_id, limit=limit)
+    return {"ok": True, "agent": agent.model_dump(), "messages": messages}
+
+
+@app.post("/api/agents/{agent_id}/conversation")
+def send_agent_conversation_message(agent_id: str, request: AgentConversationRequest):
+    agent = get_agent_instance(request.user_id, agent_id)
+    if agent is None:
+        raise HTTPException(status_code=404, detail=f"Agent {agent_id} not found")
+
+    history = load_agent_conversation(request.user_id, agent_id, limit=request.max_history)
+    prompt = _build_conversation_prompt(
+        agent_label=agent.label,
+        agent_role=agent.role,
+        history=history,
+        user_message=request.message,
+    )
+    system_instruction = (
+        ASSISTANT_SYSTEM_PROMPT
+        + "\nStay in character as the selected office agent. Use concise, practical replies."
+    )
+
+    try:
+        reply = generate_text(prompt=prompt, system_instruction=system_instruction, temperature=0.35)
+    except GeminiError as error:
+        raise HTTPException(status_code=502, detail=str(error)) from error
+
+    ts = now_ms()
+    append_agent_conversation_messages(
+        request.user_id,
+        agent_id,
+        [
+            {"role": "user", "text": request.message, "created_at": ts},
+            {"role": "assistant", "text": reply, "created_at": now_ms()},
+        ],
+    )
+    messages = load_agent_conversation(request.user_id, agent_id, limit=request.max_history)
+    return {"ok": True, "agent": agent.model_dump(), "reply": reply, "messages": messages}
+
+
+@app.delete("/api/agents/{agent_id}/conversation")
+def reset_agent_conversation(agent_id: str, user_id: str = Query(..., min_length=1)):
+    agent = get_agent_instance(user_id, agent_id)
+    if agent is None:
+        raise HTTPException(status_code=404, detail=f"Agent {agent_id} not found")
+    clear_agent_conversation(user_id, agent_id)
+    return {"ok": True, "agent_id": agent_id}
 
 
 @app.post("/api/orchestrate")

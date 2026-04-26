@@ -1,3 +1,5 @@
+from typing import Any
+
 from officeops_runtime.contracts.artifacts import RuntimeArtifact
 from officeops_runtime.contracts.runtime import (
     AgentCapability,
@@ -28,8 +30,8 @@ def _default_agent_templates() -> list[AgentTemplate]:
             role="concierge",
             department="lobby",
             default_floor_id=1,
-            model_provider="openai",
-            model_name="gpt-4.1",
+            model_provider="gemini",
+            model_name="gemini-3-flash-preview",
             capabilities=[
                 AgentCapability(key="visitor-routing", description="Route incoming visitors and calls."),
                 AgentCapability(key="voice-reception", description="Handle Vapi lobby intake.", integration="vapi"),
@@ -47,8 +49,8 @@ def _default_agent_templates() -> list[AgentTemplate]:
             role="router",
             department="executive",
             default_floor_id=7,
-            model_provider="openai",
-            model_name="gpt-4.1",
+            model_provider="gemini",
+            model_name="gemini-3-flash-preview",
             capabilities=[
                 AgentCapability(key="cross-floor-routing", description="Coordinate tasks across floors."),
             ],
@@ -65,8 +67,8 @@ def _default_agent_templates() -> list[AgentTemplate]:
             role="builder",
             department="engineering",
             default_floor_id=4,
-            model_provider="openai",
-            model_name="gpt-4.1",
+            model_provider="gemini",
+            model_name="gemini-3-flash-preview",
             capabilities=[
                 AgentCapability(key="build-artifacts", description="Generate code and deployable outputs."),
             ],
@@ -83,8 +85,8 @@ def _default_agent_templates() -> list[AgentTemplate]:
             role="sales-operator",
             department="sales",
             default_floor_id=6,
-            model_provider="openai",
-            model_name="gpt-4.1",
+            model_provider="gemini",
+            model_name="gemini-3-flash-preview",
             capabilities=[
                 AgentCapability(key="meeting-ops", description="Coordinate outreach and meetings.", integration="google_calendar"),
             ],
@@ -101,8 +103,8 @@ def _default_agent_templates() -> list[AgentTemplate]:
             role="campaign-producer",
             department="marketing",
             default_floor_id=5,
-            model_provider="openai",
-            model_name="gpt-4.1",
+            model_provider="gemini",
+            model_name="gemini-3-flash-preview",
             capabilities=[
                 AgentCapability(key="campaign-assets", description="Create campaign drafts and assets."),
             ],
@@ -119,8 +121,8 @@ def _default_agent_templates() -> list[AgentTemplate]:
             role="controller",
             department="accounting",
             default_floor_id=3,
-            model_provider="openai",
-            model_name="gpt-4.1",
+            model_provider="gemini",
+            model_name="gemini-3-flash-preview",
             capabilities=[
                 AgentCapability(key="finance-ops", description="Track books, invoices, and reconciliation."),
             ],
@@ -169,41 +171,54 @@ def _build_default_agent_instances(templates: list[AgentTemplate]) -> dict[str, 
 
 def load_company_snapshot(user_id: str) -> CompanySnapshot:
     value = rtdb.reference(_company_path(user_id)).get() or {}
-    floors_value = value.get("floors", {})
+    
+    def _get_floor_data(f_val: object, f_id: int) -> dict:
+        if isinstance(f_val, list):
+            return f_val[f_id] if f_id < len(f_val) and f_val[f_id] else {}
+        elif isinstance(f_val, dict):
+            return f_val.get(str(f_id)) or {}
+        return {}
+
+    def _to_list(obj: object) -> list:
+        if isinstance(obj, dict):
+            return list(obj.values())
+        if isinstance(obj, list):
+            return [x for x in obj if x is not None]
+        return []
+
+    floors_value = value.get("floors") or {}
     floor_agents: dict[int, list[AgentInstance]] = {}
 
     for floor in DEFAULT_FLOORS:
-        floor_agents[floor.id] = _parse_floor_agents(floors_value.get(str(floor.id), {}).get("agents", {}))
+        floor_agents[floor.id] = _parse_floor_agents(_get_floor_data(floors_value, floor.id).get("agents", {}))
 
-    templates_raw = value.get("agentTemplates") or []
-    templates = (
-        [AgentTemplate.model_validate(item) for item in templates_raw]
-        if templates_raw
-        else _default_agent_templates()
-    )
+    templates_raw = value.get("agentTemplates")
+    if templates_raw:
+        templates = [AgentTemplate.model_validate(item) for item in _to_list(templates_raw)]
+    else:
+        templates = _default_agent_templates()
 
-    if not value.get("agentTemplates"):
+    if not templates_raw:
         bootstrap_company(user_id, templates)
         value = rtdb.reference(_company_path(user_id)).get() or {}
-        floors_value = value.get("floors", {})
+        floors_value = value.get("floors") or {}
         floor_agents = {}
         for floor in DEFAULT_FLOORS:
-            floor_agents[floor.id] = _parse_floor_agents(floors_value.get(str(floor.id), {}).get("agents", {}))
-        templates = [AgentTemplate.model_validate(item) for item in (value.get("agentTemplates", {}) or {}).values()] or templates
+            floor_agents[floor.id] = _parse_floor_agents(_get_floor_data(floors_value, floor.id).get("agents", {}))
+        templates_raw2 = value.get("agentTemplates")
+        if templates_raw2:
+            templates = [AgentTemplate.model_validate(item) for item in _to_list(templates_raw2)]
+
+    assets_val = value.get("assets", {})
+    assets_by_id = assets_val.get("byId") if isinstance(assets_val, dict) else None
 
     return CompanySnapshot(
         user_id=user_id,
         floors=DEFAULT_FLOORS,
         agent_templates=templates,
         floor_agents=floor_agents,
-        active_runs=[
-            RuntimeRun.model_validate(item)
-            for item in (value.get("runs", {}) or {}).values()
-        ],
-        assets=[
-            UserAsset.model_validate(item)
-            for item in (value.get("assets", {}).get("byId", {}) or {}).values()
-        ],
+        active_runs=[RuntimeRun.model_validate(item) for item in _to_list(value.get("runs"))],
+        assets=[UserAsset.model_validate(item) for item in _to_list(assets_by_id)],
     )
 
 
@@ -319,3 +334,67 @@ def update_agent_instance_assets(
             )
             return updated_agent
     return None
+
+
+def get_agent_instance(user_id: str, agent_id: str) -> AgentInstance | None:
+    company = load_company_snapshot(user_id)
+    for agents in company.floor_agents.values():
+        for agent in agents:
+            if agent.id == agent_id:
+                return agent
+    return None
+
+
+def load_agent_conversation(user_id: str, agent_id: str, limit: int = 20) -> list[dict[str, Any]]:
+    raw = rtdb.reference(f"{_company_path(user_id)}/agentConversations/{agent_id}/messages").get() or {}
+    items: list[dict[str, Any]] = []
+
+    if isinstance(raw, dict):
+        for value in raw.values():
+            if isinstance(value, dict):
+                items.append(value)
+    elif isinstance(raw, list):
+        for value in raw:
+            if isinstance(value, dict):
+                items.append(value)
+
+    items.sort(key=lambda item: int(item.get("created_at") or item.get("createdAt") or 0))
+    if limit > 0:
+        items = items[-limit:]
+    return items
+
+
+def append_agent_conversation_messages(
+    user_id: str, agent_id: str, messages: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    if not messages:
+        return []
+
+    base = f"{_company_path(user_id)}/agentConversations/{agent_id}"
+    message_ref = rtdb.reference(f"{base}/messages")
+    now = now_ms()
+    saved: list[dict[str, Any]] = []
+
+    for message in messages:
+        created_at = int(message.get("created_at") or now)
+        payload = {
+            "id": str(message.get("id") or create_id("msg")),
+            "role": str(message.get("role") or "assistant"),
+            "text": str(message.get("text") or ""),
+            "created_at": created_at,
+        }
+        message_ref.child(payload["id"]).set(payload)
+        saved.append(payload)
+
+    rtdb.reference(base).update(
+        {
+            "agentId": agent_id,
+            "updatedAt": now,
+            "lastMessageAt": max(message["created_at"] for message in saved),
+        }
+    )
+    return saved
+
+
+def clear_agent_conversation(user_id: str, agent_id: str) -> None:
+    rtdb.reference(f"{_company_path(user_id)}/agentConversations/{agent_id}").delete()

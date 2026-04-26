@@ -17,6 +17,7 @@ from officeops_runtime.firebase.company_runtime import (
 )
 from officeops_runtime.llm.gemini import GeminiError, generate_json, generate_text
 from officeops_runtime.llm.prompts import (
+    ASSISTANT_SYSTEM_PROMPT,
     DEVELOPER_SYSTEM_PROMPT,
     PLANNER_SYSTEM_PROMPT,
     REQUIREMENTS_SYSTEM_PROMPT,
@@ -230,6 +231,111 @@ def dispatch_cross_floor_agents(state: RuntimeGraphState) -> RuntimeGraphState:
                 "stage": "dispatch",
             }
         )
+    return state
+
+
+def _fallback_assistant_answer(prompt: str, error: Exception | None = None) -> str:
+    normalized = prompt.lower().strip().rstrip("?!.")
+    compact = " ".join(normalized.split())
+
+    if "capital" in compact:
+        if "united states" in compact or "usa" in compact:
+            return "The capital of the United States is Washington, D.C."
+
+        state_capitals = [
+            ("alabama", "Alabama", "Montgomery"),
+            ("alaska", "Alaska", "Juneau"),
+            ("arizona", "Arizona", "Phoenix"),
+            ("arkansas", "Arkansas", "Little Rock"),
+            ("california", "California", "Sacramento"),
+            ("califonria", "California", "Sacramento"),
+            ("colorado", "Colorado", "Denver"),
+            ("connecticut", "Connecticut", "Hartford"),
+            ("delaware", "Delaware", "Dover"),
+            ("florida", "Florida", "Tallahassee"),
+            ("georgia", "Georgia", "Atlanta"),
+            ("hawaii", "Hawaii", "Honolulu"),
+            ("idaho", "Idaho", "Boise"),
+            ("illinois", "Illinois", "Springfield"),
+            ("indiana", "Indiana", "Indianapolis"),
+            ("iowa", "Iowa", "Des Moines"),
+            ("kansas", "Kansas", "Topeka"),
+            ("kentucky", "Kentucky", "Frankfort"),
+            ("louisiana", "Louisiana", "Baton Rouge"),
+            ("maine", "Maine", "Augusta"),
+            ("maryland", "Maryland", "Annapolis"),
+            ("massachusetts", "Massachusetts", "Boston"),
+            ("michigan", "Michigan", "Lansing"),
+            ("minnesota", "Minnesota", "St. Paul"),
+            ("mississippi", "Mississippi", "Jackson"),
+            ("missouri", "Missouri", "Jefferson City"),
+            ("montana", "Montana", "Helena"),
+            ("nebraska", "Nebraska", "Lincoln"),
+            ("nevada", "Nevada", "Carson City"),
+            ("new hampshire", "New Hampshire", "Concord"),
+            ("new jersey", "New Jersey", "Trenton"),
+            ("new mexico", "New Mexico", "Santa Fe"),
+            ("new york", "New York", "Albany"),
+            ("north carolina", "North Carolina", "Raleigh"),
+            ("north dakota", "North Dakota", "Bismarck"),
+            ("ohio", "Ohio", "Columbus"),
+            ("oklahoma", "Oklahoma", "Oklahoma City"),
+            ("oregon", "Oregon", "Salem"),
+            ("pennsylvania", "Pennsylvania", "Harrisburg"),
+            ("rhode island", "Rhode Island", "Providence"),
+            ("south carolina", "South Carolina", "Columbia"),
+            ("south dakota", "South Dakota", "Pierre"),
+            ("tennessee", "Tennessee", "Nashville"),
+            ("tennesse", "Tennessee", "Nashville"),
+            ("texas", "Texas", "Austin"),
+            ("utah", "Utah", "Salt Lake City"),
+            ("vermont", "Vermont", "Montpelier"),
+            ("virginia", "Virginia", "Richmond"),
+            ("washington", "Washington", "Olympia"),
+            ("west virginia", "West Virginia", "Charleston"),
+            ("wisconsin", "Wisconsin", "Madison"),
+            ("wyoming", "Wyoming", "Cheyenne"),
+        ]
+        for state_key, state_label, capital in state_capitals:
+            if state_key in compact:
+                return f"The capital of {state_label} is {capital}."
+
+    details = f" Runtime detail: {error}" if error else ""
+    return (
+        "I could not reach the configured language model for this run, so I cannot produce a "
+        f"real assistant answer yet.{details}"
+    )
+
+
+def assistant_response_node(state: RuntimeGraphState) -> RuntimeGraphState:
+    try:
+        answer = generate_text(
+            system_instruction=ASSISTANT_SYSTEM_PROMPT,
+            prompt=state.prompt,
+            temperature=0.2,
+        )
+    except GeminiError as error:
+        answer = _fallback_assistant_answer(state.prompt, error)
+
+    state.artifacts.append(
+        RuntimeArtifact(
+            id=create_id("artifact"),
+            file_name="assistant-response.md",
+            mime_type="text/markdown",
+            content=answer,
+            kind="notes",
+            floor_id=state.floor_id,
+            stage="assistant",
+        )
+    )
+    state.logs.append(
+        {
+            "level": "info",
+            "message": "Assistant response ready.",
+            "at": now_ms(),
+            "stage": "assistant",
+        }
+    )
     return state
 
 

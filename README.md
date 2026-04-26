@@ -27,6 +27,19 @@ This service is intended to replace the old hackathon orchestrator while preserv
 - elevator transfer persistence skeleton
 - SSE route contract compatible with OfficeOps
 
+## Gemini auth
+
+The runtime uses Vertex AI through the Google Gen AI SDK with Application Default
+Credentials. On Cloud Run this means the attached service account is used
+directly; no `GEMINI_API_KEY` or `GOOGLE_API_KEY` secret is required.
+
+Required environment:
+
+- `GOOGLE_CLOUD_PROJECT=customspro-bd062`
+- `GOOGLE_CLOUD_LOCATION=global`
+- `GOOGLE_GENAI_USE_VERTEXAI=true`
+- `DEFAULT_MODEL_NAME=gemini-3-flash-preview`
+
 ## Next implementation passes
 
 1. connect real model providers and agent executors

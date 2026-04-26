@@ -66,6 +66,7 @@ class UserAsset(BaseModel):
     owner_uid: str
     created_at: int
     updated_at: int
+    wallet_address: str | None = None
     metadata: dict[str, object] = Field(default_factory=dict)
 
 
@@ -100,20 +101,20 @@ class AgentTemplate(BaseModel):
 
 class AgentInstance(BaseModel):
     id: str
-    template_id: str
+    template_id: str = "legacy_frontend_agent"
     label: str
     role: str
-    home_floor_id: int
-    current_floor_id: int
+    home_floor_id: int = 7
+    current_floor_id: int = 7
     status: AgentRuntimeStatus
     current_task: str | None = None
     enabled: bool = True
     integrations: list[IntegrationKey] = Field(default_factory=list)
-    model_provider: str
-    model_name: str
+    model_provider: str = "gemini"
+    model_name: str = "gemini-3-flash-preview"
     asset_overrides: AgentAssetOverrides = Field(default_factory=AgentAssetOverrides)
-    created_at: int
-    updated_at: int
+    created_at: int = 0
+    updated_at: int = 0
     metadata: dict[str, object] = Field(default_factory=dict)
 
 
@@ -140,18 +141,39 @@ class ElevatorTransfer(BaseModel):
     run_id: str | None = None
 
 
+from pydantic import BaseModel, Field, model_validator
+
 class RuntimeRun(BaseModel):
-    id: str
-    user_id: str
-    floor_id: int
-    prompt: str
-    status: RunStatus
-    started_at: int
-    updated_at: int
+    id: str = "unknown"
+    user_id: str = "unknown"
+    floor_id: int = 7
+    prompt: str = ""
+    status: RunStatus = "running"
+    started_at: int = 0
+    updated_at: int = 0
     finished_at: int | None = None
     active_agent_ids: list[str] = Field(default_factory=list)
     artifact_ids: list[str] = Field(default_factory=list)
     last_message: str | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _map_camel_case(cls, data: dict) -> dict:
+        if isinstance(data, dict):
+            mapping = {
+                "floorId": "floor_id",
+                "userId": "user_id",
+                "startedAt": "started_at",
+                "updatedAt": "updated_at",
+                "finishedAt": "finished_at",
+                "activeAgentIds": "active_agent_ids",
+                "artifactIds": "artifact_ids",
+                "lastMessage": "last_message",
+            }
+            for camel, snake in mapping.items():
+                if camel in data and snake not in data:
+                    data[snake] = data[camel]
+        return data
 
 
 class CompanySnapshot(BaseModel):

@@ -12,7 +12,8 @@ dependencies = [
   "pydantic>=2.10.4",
   "pydantic-settings>=2.7.0",
   "firebase-admin>=6.6.0",
-  "python-multipart>=0.0.20"
+  "python-multipart>=0.0.20",
+  "google-genai>=1.51.0"
 ]
 
 [project.optional-dependencies]

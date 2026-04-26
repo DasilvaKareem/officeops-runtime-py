@@ -2,6 +2,7 @@ from langgraph.graph import END, START, StateGraph
 
 from officeops_runtime.contracts.runtime import RuntimeGraphState
 from officeops_runtime.graph.nodes import (
+    assistant_response_node,
     artifact_writer_node,
     developer_node,
     dispatch_cross_floor_agents,
@@ -24,6 +25,7 @@ def build_workflow():
     graph.add_node("requirements_node", requirements_node)
     graph.add_node("planner_node", planner_node)
     graph.add_node("dispatch_cross_floor_agents", dispatch_cross_floor_agents)
+    graph.add_node("assistant_response_node", assistant_response_node)
     graph.add_node("developer_node", developer_node)
     graph.add_node("review_node", review_node)
     graph.add_node("artifact_writer_node", artifact_writer_node)
@@ -36,7 +38,8 @@ def build_workflow():
     graph.add_edge("route_request", "requirements_node")
     graph.add_edge("requirements_node", "planner_node")
     graph.add_edge("planner_node", "dispatch_cross_floor_agents")
-    graph.add_edge("dispatch_cross_floor_agents", "developer_node")
+    graph.add_edge("dispatch_cross_floor_agents", "assistant_response_node")
+    graph.add_edge("assistant_response_node", "developer_node")
     graph.add_edge("developer_node", "review_node")
     graph.add_edge("review_node", "artifact_writer_node")
     graph.add_edge("artifact_writer_node", "runtime_sync_node")
