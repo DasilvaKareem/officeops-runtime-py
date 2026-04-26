@@ -1111,6 +1111,13 @@ export const useOfficeStore = create<OfficeState>((set, get) => ({
             `Task finished. ${activeRun.completedSteps}/${activeRun.totalSteps} steps complete, spent ${fmtMoney(activeRun.totalSpent)}.`,
             "success"
           );
+        } else if (activeRun.totalSteps > 0 && activeRun.completedSteps >= activeRun.totalSteps) {
+          markRunFinished(
+            "complete",
+            activeRun.assistantMessage
+              || `Task finished. ${activeRun.completedSteps}/${activeRun.totalSteps} steps complete, spent ${fmtMoney(activeRun.totalSpent)}.`,
+            "success"
+          );
         } else {
           markRunFinished(
             "error",
