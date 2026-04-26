@@ -331,7 +331,7 @@ async def orchestrate_paid(raw_request: Request):
     expected_payer = str(body.get("expectedPayerAddress") or "").strip().lower()
 
     price = os.getenv("NANOPAYMENT_PRICE", "$0.01")
-    gateway = build_gateway_from_env()
+    gateway = build_gateway_from_env(default_seller_address=expected_payer or None)
     payment_signature = raw_request.headers.get("Payment-Signature")
 
     if not payment_signature:

@@ -190,8 +190,8 @@ class X402Gateway:
         )
 
 
-def build_gateway_from_env() -> X402Gateway:
-    seller_address = os.getenv("NANOPAYMENT_SELLER_ADDRESS")
+def build_gateway_from_env(default_seller_address: str | None = None) -> X402Gateway:
+    seller_address = os.getenv("NANOPAYMENT_SELLER_ADDRESS") or default_seller_address
     if not seller_address:
         raise RuntimeError("NANOPAYMENT_SELLER_ADDRESS is required for paid orchestrate endpoint")
     facilitator_url = os.getenv("NANOPAYMENT_FACILITATOR_URL")
