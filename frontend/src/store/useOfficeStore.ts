@@ -746,13 +746,33 @@ export const useOfficeStore = create<OfficeState>((set, get) => ({
           throw new Error(paidPayload?.error ?? `Nanopayment route failed (${paidResponse.status})`);
         }
 
-        const runtimeState = paidPayload.data as {
+        const paidData = paidPayload.data as {
+          ok?: boolean;
+          payment?: {
+            transaction?: string;
+            amountUsdc?: number;
+            agentPayouts?: Array<{ agentId?: string; amountUsdc?: number }>;
+          };
+          state?: {
+            run_id?: string;
+            artifacts?: Array<Record<string, unknown>>;
+            logs?: Array<{ message?: string; stage?: string; level?: string }>;
+          };
+        };
+        const runtimeState = paidData?.state as {
           run_id?: string;
           artifacts?: Array<Record<string, unknown>>;
           logs?: Array<{ message?: string; stage?: string; level?: string }>;
         };
-        const txHash = typeof paidPayload.transaction === "string" ? paidPayload.transaction : undefined;
-        const amount = Number.parseFloat(String(paidPayload.amount ?? "0"));
+        const txHash = typeof paidData?.payment?.transaction === "string"
+          ? paidData.payment.transaction
+          : typeof paidPayload.transaction === "string"
+            ? paidPayload.transaction
+            : undefined;
+        const paymentAmountUsdc = paidData?.payment?.amountUsdc;
+        const amount = typeof paymentAmountUsdc === "number" && Number.isFinite(paymentAmountUsdc)
+          ? paymentAmountUsdc
+          : Number.parseFloat(String(paidPayload.amount ?? "0"));
         const paidAmount = Number.isFinite(amount) && amount > 0 ? amount : DEFAULT_STEP_PAYMENT;
         const now = Date.now();
 
@@ -769,6 +789,16 @@ export const useOfficeStore = create<OfficeState>((set, get) => ({
         const assistantMessage = extractAssistantMessage(artifacts) ?? "Paid run completed.";
 
         const agentIds = get().baseAgents.map((agent) => agent.id);
+        const payoutByAgent = new Map<string, number>();
+        const backendPayouts = paidData?.payment?.agentPayouts;
+        if (Array.isArray(backendPayouts)) {
+          for (const payout of backendPayouts) {
+            if (!payout?.agentId) continue;
+            const amountUsdc = Number(payout.amountUsdc ?? 0);
+            if (!Number.isFinite(amountUsdc) || amountUsdc <= 0) continue;
+            payoutByAgent.set(payout.agentId, amountUsdc);
+          }
+        }
         const payoutPerAgent = paidAmount / Math.max(1, agentIds.length);
 
         updateRun((runState) => {
@@ -787,7 +817,7 @@ export const useOfficeStore = create<OfficeState>((set, get) => ({
             nextState = updateRunAgent(nextState, agentId, (snapshot) => ({
               status: "idle",
               currentTask: null,
-              spend: (snapshot?.spend || 0) + payoutPerAgent,
+              spend: (snapshot?.spend || 0) + (payoutByAgent.get(agentId) ?? payoutPerAgent),
               updatedAt: now,
             }));
           }

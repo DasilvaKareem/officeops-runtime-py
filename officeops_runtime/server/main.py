@@ -1,4 +1,9 @@
-from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
+import base64
+import json
+import os
+
+from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
+from fastapi.responses import JSONResponse
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, model_validator
 
@@ -17,6 +22,7 @@ from officeops_runtime.firebase.company_runtime import (
 )
 from officeops_runtime.llm.gemini import GeminiError, generate_text
 from officeops_runtime.llm.prompts import ASSISTANT_SYSTEM_PROMPT
+from officeops_runtime.payments.x402_gateway import build_gateway_from_env
 from officeops_runtime.server.sse import build_failure_stream, build_stream
 from officeops_runtime.services.runtime_service import run_runtime_graph, stream_runtime_graph
 from officeops_runtime.utils.time import now_ms
@@ -316,3 +322,83 @@ def orchestrate_sync(request: OrchestrateRequest):
         prompt=request.prompt,
     )
     return final_state.model_dump()
+
+
+@app.post("/api/orchestrate-paid")
+async def orchestrate_paid(raw_request: Request):
+    body = await raw_request.json()
+    request = OrchestrateRequest.model_validate(body)
+    expected_payer = str(body.get("expectedPayerAddress") or "").strip().lower()
+
+    price = os.getenv("NANOPAYMENT_PRICE", "$0.01")
+    gateway = build_gateway_from_env()
+    payment_signature = raw_request.headers.get("Payment-Signature")
+
+    if not payment_signature:
+        payment_required_header = gateway.payment_required_header(
+            price=price,
+            resource_url=str(raw_request.url.path),
+            description="OfficeOps paid orchestrate run",
+        )
+        return JSONResponse(
+            status_code=402,
+            content={},
+            headers={"PAYMENT-REQUIRED": payment_required_header},
+        )
+
+    settlement = gateway.verify_and_settle(price=price, payment_signature_header=payment_signature)
+    if expected_payer:
+        actual_payer = settlement.payer.strip().lower()
+        if not actual_payer or actual_payer != expected_payer:
+            raise HTTPException(
+                status_code=402,
+                detail=f"Payment payer mismatch: expected {expected_payer}, got {settlement.payer or 'unknown'}",
+            )
+
+    final_state = run_runtime_graph(
+        user_id=request.user_id,
+        floor_id=request.floor_id,
+        prompt=request.prompt,
+    )
+
+    active_agents = list(final_state.active_agents.values())
+    if active_agents:
+        share = settlement.amount_usdc / len(active_agents)
+        payouts = [
+            {
+                "agentId": agent.id,
+                "label": agent.label,
+                "role": agent.role,
+                "amountUsdc": round(share, 6),
+            }
+            for agent in active_agents
+        ]
+    else:
+        payouts = []
+
+    payment_response = base64.b64encode(
+        json.dumps(
+            {
+                "success": True,
+                "transaction": settlement.transaction,
+                "network": settlement.network,
+                "payer": settlement.payer,
+            }
+        ).encode("utf-8")
+    ).decode("utf-8")
+
+    return JSONResponse(
+        content={
+            "ok": True,
+            "payment": {
+                "transaction": settlement.transaction,
+                "payer": settlement.payer,
+                "network": settlement.network,
+                "amountAtomic": settlement.amount_atomic,
+                "amountUsdc": settlement.amount_usdc,
+                "agentPayouts": payouts,
+            },
+            "state": final_state.model_dump(),
+        },
+        headers={"PAYMENT-RESPONSE": payment_response},
+    )

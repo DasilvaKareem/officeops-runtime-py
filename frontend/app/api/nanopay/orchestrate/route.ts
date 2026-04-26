@@ -1,5 +1,6 @@
 import { NextRequest } from "next/server";
 import { GatewayClient } from "@circle-fin/x402-batching/client";
+import { privateKeyToAccount } from "viem/accounts";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -12,7 +13,7 @@ type Body = {
 };
 
 function getBaseUrl() {
-  return (process.env.NANOPAYMENTS_URL || "http://localhost:4021").replace(/\/+$/, "");
+  return (process.env.ORCHESTRATOR_URL || "http://localhost:3002").replace(/\/+$/, "");
 }
 
 function getChain() {
@@ -37,9 +38,22 @@ export async function POST(request: NextRequest) {
       chain: getChain(),
       privateKey: buyerPrivateKey as `0x${string}`,
     });
+    const buyerAccount = privateKeyToAccount(buyerPrivateKey as `0x${string}`);
 
-    const endpoint = `${getBaseUrl()}/orchestrate?prompt=${encodeURIComponent(prompt)}&userId=${encodeURIComponent(userId)}&floorId=${encodeURIComponent(String(floorId))}`;
-    const paid = await gateway.pay(endpoint);
+    const endpoint = `${getBaseUrl()}/api/orchestrate-paid`;
+    const paid = await gateway.pay(endpoint, {
+      method: "POST",
+      body: {
+        prompt,
+        requirement: prompt,
+        userId,
+        floorId,
+        expectedPayerAddress: buyerAccount.address,
+      },
+      headers: {
+        "Content-Type": "application/json",
+      },
+    });
 
     return Response.json({
       ok: true,
