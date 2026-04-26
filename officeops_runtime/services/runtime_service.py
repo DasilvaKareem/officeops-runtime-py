@@ -23,6 +23,7 @@ from officeops_runtime.contracts.stream_events import (
     PaymentEvent,
     StreamEvent,
     WorkflowCompletedEvent,
+    WorkflowFailedEvent,
     WorkflowStartedEvent,
 )
 from officeops_runtime.utils.ids import create_id
@@ -84,8 +85,23 @@ def _agent_for_stage(state: RuntimeGraphState, stage_name: str) -> tuple[str | N
 def _latest_message(state: RuntimeGraphState, previous_log_count: int, fallback: str) -> str:
     new_logs = state.logs[previous_log_count:]
     if new_logs:
-        return new_logs[-1].message
+        last = new_logs[-1]
+        if isinstance(last, dict):
+            return str(last.get("message") or fallback)
+        return str(getattr(last, "message", fallback) or fallback)
     return fallback
+
+
+def _log_stage(log: object) -> str:
+    if isinstance(log, dict):
+        return str(log.get("stage") or log.get("level") or "info")
+    return str(getattr(log, "stage", None) or getattr(log, "level", None) or "info")
+
+
+def _log_message(log: object) -> str:
+    if isinstance(log, dict):
+        return str(log.get("message") or "")
+    return str(getattr(log, "message", "") or "")
 
 
 def stream_runtime_graph(user_id: str, floor_id: int, prompt: str):
@@ -145,7 +161,7 @@ def stream_runtime_graph(user_id: str, floor_id: int, prompt: str):
         for log in state.logs[previous_log_count:]:
             yield MessageEvent(
                 run_id=state.run_id,
-                message=f"[{log.stage or log.level}] {log.message}",
+                message=f"[{_log_stage(log)}] {_log_message(log)}",
             )
 
         amount = STAGE_COSTS.get(stage_name)
