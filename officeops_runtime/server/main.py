@@ -18,7 +18,7 @@ from officeops_runtime.firebase.company_runtime import (
 from officeops_runtime.llm.gemini import GeminiError, generate_text
 from officeops_runtime.llm.prompts import ASSISTANT_SYSTEM_PROMPT
 from officeops_runtime.server.sse import build_failure_stream, build_stream
-from officeops_runtime.services.runtime_service import stream_runtime_graph
+from officeops_runtime.services.runtime_service import run_runtime_graph, stream_runtime_graph
 from officeops_runtime.utils.time import now_ms
 
 app = FastAPI(title="OfficeOps Runtime Python")
@@ -306,3 +306,13 @@ async def orchestrate(request: OrchestrateRequest):
             media_type="text/event-stream",
             status_code=500,
         )
+
+
+@app.post("/api/orchestrate-sync")
+def orchestrate_sync(request: OrchestrateRequest):
+    final_state = run_runtime_graph(
+        user_id=request.user_id,
+        floor_id=request.floor_id,
+        prompt=request.prompt,
+    )
+    return final_state.model_dump()

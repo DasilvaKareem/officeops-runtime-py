@@ -4,6 +4,7 @@ import { useEffect, useRef } from "react";
 import { auth, db } from "@/src/lib/firebase";
 import { onAuthStateChanged } from "firebase/auth";
 import { ref, get, set } from "firebase/database";
+import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import {
   buildInitialAgents,
   coerceAgentModelPath,
@@ -12,6 +13,23 @@ import {
 } from "@/src/lib/officeSim";
 import { useOfficeStore, initialFurniture, type UserProfile } from "@/src/store/useOfficeStore";
 import { syncRuntimeAgentsForFloor } from "@/src/lib/companyRuntime";
+
+function walletStorageKey(uid: string) {
+  return `officeops_wallet_pk_${uid}`;
+}
+
+function ensureLocalWallet(uid: string): { privateKey: `0x${string}`; address: string } {
+  const key = walletStorageKey(uid);
+  const existing = localStorage.getItem(key);
+  if (existing && existing.startsWith("0x")) {
+    const account = privateKeyToAccount(existing as `0x${string}`);
+    return { privateKey: existing as `0x${string}`, address: account.address };
+  }
+  const privateKey = generatePrivateKey();
+  const account = privateKeyToAccount(privateKey);
+  localStorage.setItem(key, privateKey);
+  return { privateKey, address: account.address };
+}
 
 function isVec3(value: unknown): value is [number, number, number] {
   return (
@@ -120,19 +138,19 @@ export function FirebaseSync() {
           const profileSnap = await get(profileRef);
           if (profileSnap.exists()) {
             const data = profileSnap.val();
-            if (!data.walletAddress) {
-              const newAddress = `0x${Array.from({length: 40}, () => Math.floor(Math.random() * 16).toString(16)).join("")}`;
-              data.walletAddress = newAddress;
+            const wallet = ensureLocalWallet(user.uid);
+            if (!data.walletAddress || String(data.walletAddress).toLowerCase() !== wallet.address.toLowerCase()) {
+              data.walletAddress = wallet.address;
               await set(profileRef, data);
-              console.log("Generated new wallet for user:", newAddress);
+              console.log("Linked real wallet for user:", wallet.address);
             }
             setUserProfile(data);
           } else if (user.displayName || user.email) {
-            const newAddress = `0x${Array.from({length: 40}, () => Math.floor(Math.random() * 16).toString(16)).join("")}`;
+            const wallet = ensureLocalWallet(user.uid);
             const newProfile: UserProfile = { 
               name: user.displayName || "",
               email: user.email || "",
-              walletAddress: newAddress,
+              walletAddress: wallet.address,
               companyName: "New Agency",
               phone: "",
               gender: "male",
@@ -143,7 +161,7 @@ export function FirebaseSync() {
             };
             await set(profileRef, newProfile);
             setUserProfile(newProfile);
-            console.log("Created new profile with wallet:", newAddress);
+            console.log("Created new profile with real wallet:", wallet.address);
           }
           loadedInitialProfile.current = true;
         } else {

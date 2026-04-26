@@ -9,6 +9,7 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@circle-fin/x402-batching": "^2.0.4",
     "@react-three/drei": "^10.7.7",
     "@react-three/fiber": "^9.6.0",
     "firebase": "^12.12.1",
@@ -16,6 +17,7 @@
     "react": "19.2.4",
     "react-dom": "19.2.4",
     "three": "^0.184.0",
+    "viem": "^2.47.4",
     "zustand": "^5.0.12"
   },
   "devDependencies": {

@@ -126,6 +126,10 @@ function fmtMoney(value: number) {
   return `$${value.toFixed(4)}`;
 }
 
+function walletStorageKey(uid: string) {
+  return `officeops_wallet_pk_${uid}`;
+}
+
 function appendLog(entry: Omit<LogEntry, "id" | "at">): LogEntry {
   return { id: uid(), at: Date.now(), ...entry };
 }
@@ -624,6 +628,11 @@ export const useOfficeStore = create<OfficeState>((set, get) => ({
       });
     }
 
+    const userId = auth.currentUser?.uid;
+    const buyerPrivateKey = userId ? localStorage.getItem(walletStorageKey(userId)) : null;
+    const nanopayEnabled = process.env.NEXT_PUBLIC_ENABLE_NANOPAYMENTS === "true";
+    const leadAgentId = get().baseAgents[0]?.id ?? null;
+
     const runLocalFallback = async () => {
       const MAX_BALANCE = 12.452;
       for (const step of steps) {
@@ -701,6 +710,137 @@ export const useOfficeStore = create<OfficeState>((set, get) => ({
         "success"
       );
     };
+
+    if (nanopayEnabled && userId && buyerPrivateKey?.startsWith("0x")) {
+      if (leadAgentId) {
+        updateRun((runState) =>
+          appendRunLog(
+            updateRunAgent(runState, leadAgentId, (snapshot) => ({
+              status: "moving",
+              currentTask: "Authorizing Circle nanopayment",
+              spend: snapshot?.spend || 0,
+              updatedAt: Date.now(),
+            })),
+            { tone: "info", text: "Requesting wallet-backed nanopayment..." }
+          )
+        );
+      }
+      persistRuntimeRunSnapshot(runId);
+      if (leadAgentId) persistRuntimeAgentSnapshot(runId, leadAgentId);
+
+      try {
+        const paidResponse = await fetch("/api/nanopay/orchestrate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            prompt,
+            userId,
+            floorId: get().selectedFloor ?? 7,
+            buyerPrivateKey,
+          }),
+          signal: controller.signal,
+        });
+
+        const paidPayload = await paidResponse.json();
+        if (!paidResponse.ok || !paidPayload?.ok) {
+          throw new Error(paidPayload?.error ?? `Nanopayment route failed (${paidResponse.status})`);
+        }
+
+        const runtimeState = paidPayload.data as {
+          run_id?: string;
+          artifacts?: Array<Record<string, unknown>>;
+          logs?: Array<{ message?: string; stage?: string; level?: string }>;
+        };
+        const txHash = typeof paidPayload.transaction === "string" ? paidPayload.transaction : undefined;
+        const amount = Number.parseFloat(String(paidPayload.amount ?? "0"));
+        const paidAmount = Number.isFinite(amount) && amount > 0 ? amount : DEFAULT_STEP_PAYMENT;
+        const now = Date.now();
+
+        const artifacts: OrchestratorArtifact[] = Array.isArray(runtimeState?.artifacts)
+          ? runtimeState.artifacts.map((item) => ({
+              fileName: typeof item.file_name === "string" ? item.file_name : "artifact.txt",
+              mimeType: typeof item.mime_type === "string" ? item.mime_type : "text/plain",
+              content: typeof item.content === "string" ? item.content : "",
+              kind: (typeof item.kind === "string" ? item.kind : "report") as OrchestratorArtifact["kind"],
+              agentName: typeof item.agent_name === "string" ? item.agent_name : undefined,
+              stage: typeof item.stage === "string" ? item.stage : undefined,
+            }))
+          : [];
+        const assistantMessage = extractAssistantMessage(artifacts) ?? "Paid run completed.";
+
+        const agentIds = get().baseAgents.map((agent) => agent.id);
+        const payoutPerAgent = paidAmount / Math.max(1, agentIds.length);
+
+        updateRun((runState) => {
+          let nextState: WorkflowRun = {
+            ...runState,
+            backendRunId: runtimeState?.run_id || runState.backendRunId,
+            artifacts: artifacts.length > 0 ? artifacts : runState.artifacts,
+            assistantMessage,
+            completedSteps: runState.totalSteps,
+            txCount: runState.txCount + 1,
+            totalSpent: runState.totalSpent + paidAmount,
+            updatedAt: now,
+          };
+
+          for (const agentId of agentIds) {
+            nextState = updateRunAgent(nextState, agentId, (snapshot) => ({
+              status: "idle",
+              currentTask: null,
+              spend: (snapshot?.spend || 0) + payoutPerAgent,
+              updatedAt: now,
+            }));
+          }
+
+          if (Array.isArray(runtimeState?.logs)) {
+            for (const log of runtimeState.logs.slice(-8)) {
+              if (!log?.message) continue;
+              nextState = appendRunLog(nextState, {
+                tone: "info",
+                text: `[${log.stage || log.level || "runtime"}] ${log.message}`,
+              });
+            }
+          }
+
+          return appendRunLog(nextState, {
+            tone: "success",
+            text: txHash ? `Nanopayment settled: ${txHash}` : "Nanopayment settled.",
+            amount: paidAmount,
+          });
+        });
+
+        persistRuntimeRunSnapshot(runId);
+        for (const agentId of agentIds) persistRuntimeAgentSnapshot(runId, agentId);
+        markRunFinished("complete", assistantMessage, "success");
+        return;
+      } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") {
+          updateRun((runState) =>
+            appendRunLog(
+              {
+                ...runState,
+                status: "cancelled",
+                successMessage: "Run stopped.",
+                finishedAt: Date.now(),
+              },
+              { tone: "warning", text: "Run stopped." }
+            )
+          );
+          runControllers.delete(runId);
+          scheduleAggregateRefresh();
+          persistRuntimeRunSnapshot(runId);
+          return;
+        }
+
+        const message = error instanceof Error ? error.message : String(error);
+        updateRun((runState) =>
+          appendRunLog(runState, {
+            tone: "warning",
+            text: `Nanopayment path failed (${message}). Falling back to direct runtime stream.`,
+          })
+        );
+      }
+    }
 
     try {
       await runOrchestratorStream({
